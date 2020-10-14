@@ -118,10 +118,11 @@ class Droplet:
     def __init__(self, ip="localhost", **kwargs):
         self._ip = ip
         self._port = kwargs.get("port", 80)
-        self._name = kwargs.get("name", "Drop")
+        self._name = kwargs.get("name", "Droplet")
+        self._connections = kwargs.get("connections", 10)
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._socket.bind((self._ip, self._port))
-        self._socket.listen(10)
+        self._socket.listen(self._connections)
         self._buf_size = kwargs.get("buf_size", 4096)
         self._routs = {}
 
@@ -153,6 +154,7 @@ class Droplet:
         request = Request()
         with BytesIO() as buffer:
             headers_done = False
+            # Цикл чтения из входящего потока
             while True:
                 # Читаем входящее сообщение в буфер
                 data = con.recv(self._buf_size)
@@ -236,15 +238,18 @@ class Droplet:
                     kwargs['request'] = request
                     response = container['call'](**kwargs)
                     if not isinstance(response, Response):
+                        # Если метод вернул не Response - пробуем завернуть в респонс самостоятельно
                         if isinstance(response, str):
                             response = Response(response)
                         elif isinstance(response, dict):
                             response = Response(json.dumps(response),
                                                 headers={"Content-Type": "application/json; charset=utf-8"})
                         else:
+                            # если непойми что - возвращаем как ошибку
                             response = Response(str(response), 500)
                     break
         if not response:
+            # Ни один обработчик не сработал
             response = Response("Not Found", 404)
         return response
 
@@ -252,6 +257,7 @@ class Droplet:
         global http_methods
         global http_status_text
 
+        # Собираем базовые заголовки
         content = bytes(response.content, encoding="utf8")
         headers = {
             "Server": self._name,
@@ -259,9 +265,12 @@ class Droplet:
             "Content-Length": len(content),
             "Content-Type": "text/html; charset=utf-8"
         }
+
+        # Добавляем заголовки, определённые методом ответа
         if response.headers:
             headers.update(response.headers)
 
+        # И всё пишем в исходящий поток
         status = str(response.status)
         status_line = http_status_text[status] if status in http_status_text else ""
         con.send(bytes(f"HTTP/1.1 {status} {status_line}\n", encoding="utf8"))
